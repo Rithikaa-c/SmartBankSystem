@@ -1,10 +1,12 @@
 import java.sql.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.InputMismatchException;
-import java.util.Scanner;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 import java.util.regex.Pattern;
 
 public class SmartBankApp {
@@ -13,444 +15,661 @@ public class SmartBankApp {
     private static final String PASSWORD = "Rithikaa@2006";
     private static final Scanner sc = new Scanner(System.in);
 
+    private static final String ADMIN_USER = "admin";
+    private static final String ADMIN_PASS = "Admin@123";
+
+    private static final List<Branch> BRANCHES = List.of(
+            new Branch("Chennai - Tambaram", "SBIN0001"),
+            new Branch("Bangalore - Whitefield", "SBIN0002"),
+            new Branch("Mumbai - Andheri", "SBIN0003"),
+            new Branch("Delhi - Rohini", "SBIN0004")
+    );
+
     public static void main(String[] args) {
         while (true) {
-            System.out.println("\n====== 💳 SMART BANK SYSTEM ======");
-            System.out.println("1. Create New Account");
-            System.out.println("2. Deposit Money");
-            System.out.println("3. Withdraw Money");
-            System.out.println("4. Check Balance");
-            System.out.println("5. Transfer Funds");
-            System.out.println("6. View Mini Statement");
-            System.out.println("7. Download Transaction History (CSV)");
-            System.out.println("8. Exit");
-            System.out.print("Enter your choice: ");
+            System.out.println("\n====== 🏦 SMART BANK LOGIN ======");
+            System.out.println("1. Admin Login");
+            System.out.println("2. Customer Login");
+            System.out.println("3. Open New Account");
+            System.out.println("4. Exit");
 
-            int choice = readInt();
+            String choice = readValidated("Enter choice (1-4): ", "^[1-4]$", "Invalid. Enter 1-4.");
+            if (choice == null) continue;
+
             switch (choice) {
-                case 1 -> createAccount();
-                case 2 -> deposit();
-                case 3 -> withdraw();
-                case 4 -> checkBalance();
-                case 5 -> transfer();
-                case 6 -> viewMiniStatement();
-                case 7 -> downloadTransactions();
-                case 8 -> {
+                case "1" -> adminLogin();
+                case "2" -> customerLogin();
+                case "3" -> createAccount();
+                case "4" -> {
                     System.out.println("🙏 Thank you for using Smart Bank!");
                     System.exit(0);
                 }
-                default -> System.out.println("❌ Invalid choice. Try again!");
             }
         }
     }
 
-    // ✅ Safe integer input
-    private static int readInt() {
+    private static String readValidated(String prompt, String regex, String err) {
+        int attempts = 3;
+        while (attempts-- > 0) {
+            System.out.print(prompt);
+            String in = sc.nextLine().trim();
+            if (regex == null || Pattern.matches(regex, in)) return in;
+            System.out.println(err + " (" + attempts + " left)");
+        }
+        System.out.println("Operation cancelled. Returning to menu...");
+        return null;
+    }
+
+    private static String hashPin(String pin) {
         try {
-            int val = sc.nextInt();
-            sc.nextLine();
-            return val;
-        } catch (InputMismatchException e) {
-            sc.nextLine();
-            return -1;
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] h = md.digest(pin.getBytes());
+            StringBuilder sb = new StringBuilder();
+            for (byte b : h) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
         }
     }
 
-    // 🏦 1. Create Account
+    private static boolean accountExists(String acc) {
+        String sql = "SELECT 1 FROM accounts WHERE account_number = ?";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, acc);
+            return ps.executeQuery().next();
+        } catch (SQLException e) { return false; }
+    }
+
+    private static boolean authenticatePin(String acc) {
+        int attempts = 3;
+        while (attempts-- > 0) {
+            String pin = readValidated("Enter 4-digit PIN: ", "^\\d{4}$", "Invalid PIN format.");
+            if (pin == null) return false;
+            String sql = "SELECT 1 FROM accounts WHERE account_number = ? AND pin = ?";
+            try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+                 PreparedStatement ps = c.prepareStatement(sql)) {
+                ps.setString(1, acc);
+                ps.setString(2, hashPin(pin));
+                if (ps.executeQuery().next()) return true;
+            } catch (SQLException ignored) {}
+            System.out.println("Incorrect PIN. (" + attempts + " left)");
+        }
+        System.out.println("Too many attempts. Returning to menu...");
+        return false;
+    }
+
+    private static String getAccountStatus(String acc) {
+        String sql = "SELECT account_status FROM accounts WHERE account_number=?";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, acc);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : null;
+        } catch (SQLException e) { return null; }
+    }
+
+    private static boolean ensureActive(String acc) {
+        String st = getAccountStatus(acc);
+        if (st == null) { System.out.println("❌ Account not found."); return false; }
+        if ("FROZEN".equals(st)) { System.out.println("⚠️ Account is FROZEN. Operation blocked."); return false; }
+        if ("CLOSED".equals(st)) { System.out.println("⚠️ Account is CLOSED. Operation blocked."); return false; }
+        return true;
+    }
+
     private static void createAccount() {
         try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
 
-            // Account type
-            System.out.println("\nSelect Account Type:");
-            System.out.println("1. Savings");
-            System.out.println("2. Current");
-            System.out.println("3. Salary");
-            System.out.print("Enter your choice: ");
-            int typeChoice = readInt();
-
-            String accType = switch (typeChoice) {
-                case 1 -> "Savings";
-                case 2 -> "Current";
-                case 3 -> "Salary";
-                default -> null;
-            };
-
-            if (accType == null) {
-                System.out.println("❌ Invalid account type selected!");
-                return;
+            System.out.println("\nSelect Branch:");
+            for (int i = 0; i < BRANCHES.size(); i++) {
+                System.out.printf("%d. %s%n", i + 1, BRANCHES.get(i).name());
             }
+            String bch = readValidated("Enter (1-4): ", "^[1-4]$", "Invalid branch.");
+            if (bch == null) return;
+            Branch branch = BRANCHES.get(Integer.parseInt(bch) - 1);
 
-            // Name validation
-            System.out.print("Enter Full Name: ");
-            String name = sc.nextLine().trim();
-            if (!Pattern.matches("^[a-zA-Z ]+$", name)) {
-                System.out.println("❌ Name should contain only alphabets and spaces!");
-                return;
-            }
+            String t = readValidated("1.Savings  2.Current  3.Salary\nSelect Type: ", "^[1-3]$", "Invalid type.");
+            if (t == null) return;
+            String type = switch (t) { case "1" -> "Savings"; case "2" -> "Current"; default -> "Salary"; };
 
-            // Email validation
-            System.out.print("Enter Email: ");
-            String email = sc.nextLine().trim();
-            if (!email.contains("@") || !email.equals(email.toLowerCase()) ||
-                    !Pattern.matches("^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,6}$", email)) {
-                System.out.println("❌ Invalid email format! Use lowercase letters only and include '@'.");
-                return;
-            }
+            String name = readValidated("Full Name: ", "^[a-zA-Z ]+$", "Name must be letters/spaces only.");
+            if (name == null) return;
+            String email = readValidated("Email (lowercase): ", "^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,6}$", "Invalid email.");
+            if (email == null) return;
+            String phone = readValidated("Phone (10 digits): ", "^[0-9]{10}$", "Invalid phone.");
+            if (phone == null) return;
+            String pin = readValidated("Set 4-digit PIN: ", "^\\d{4}$", "Invalid PIN.");
+            if (pin == null) return;
 
-            // Phone number validation
-            System.out.print("Enter Phone Number (10 digits): ");
-            String phone = sc.nextLine().trim();
-            if (!Pattern.matches("^[0-9]{10}$", phone)) {
-                System.out.println("❌ Phone number must be exactly 10 digits!");
-                return;
-            }
+            String encPin = hashPin(pin);
 
-            // PIN validation
-            System.out.print("Set a 4-digit PIN: ");
-            String pin = sc.nextLine().trim();
-            if (!pin.matches("\\d{4}")) {
-                System.out.println("❌ PIN must be exactly 4 digits!");
-                return;
-            }
+            String lastAcc = getLastAccountNumber(conn);
+            String accNo = generateAccNo(lastAcc, type);
+            String ifsc = branch.ifscPrefix() + accNo.substring(accNo.length() - 3);
 
-            // Account number generation
-            String lastAccNo = getLastAccountNumber(conn);
-            String newAccNo = generateNextAccountNumber(lastAccNo);
-
-            // SQL insert
-            String sql = "INSERT INTO accounts (account_number, holder_name, pin, balance, created_at, account_type, email, phone_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, newAccNo);
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    INSERT INTO accounts
+                    (account_number, holder_name, pin, balance, account_status, created_at,
+                     account_type, email, phone_number, branch_name, ifsc_code)
+                    VALUES (?, ?, ?, 0, 'ACTIVE', NOW(), ?, ?, ?, ?, ?)
+                    """)) {
+                ps.setString(1, accNo);
                 ps.setString(2, name);
-                ps.setString(3, pin);
-                ps.setBigDecimal(4, BigDecimal.ZERO);
-                ps.setTimestamp(5, Timestamp.valueOf(LocalDateTime.now()));
-                ps.setString(6, accType);
-                ps.setString(7, email);
-                ps.setString(8, phone);
+                ps.setString(3, encPin);
+                ps.setString(4, type);
+                ps.setString(5, email);
+                ps.setString(6, phone);
+                ps.setString(7, branch.name());
+                ps.setString(8, ifsc);
                 ps.executeUpdate();
             }
 
-            System.out.println("\n✅ Account created successfully!");
-            System.out.println("Account Type: " + accType);
-            System.out.println("Account Number: " + newAccNo);
+            System.out.println("\n✅ Account Created!");
+            System.out.println("Account: " + accNo);
+            System.out.println("Branch : " + branch.name());
+            System.out.println("IFSC   : " + ifsc);
 
         } catch (SQLException e) {
-            System.out.println("❌ Database Error: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
         }
     }
 
     private static String getLastAccountNumber(Connection conn) throws SQLException {
-        String sql = "SELECT account_number FROM accounts ORDER BY created_at DESC LIMIT 1";
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            if (rs.next()) return rs.getString(1);
-        }
-        return null;
-    }
-
-    private static String generateNextAccountNumber(String lastAccNo) {
-        if (lastAccNo == null) return "ACC1001";
-        int num = Integer.parseInt(lastAccNo.substring(3));
-        return "ACC" + (num + 1);
-    }
-
-    // 💰 2. Deposit
-    private static void deposit() {
-        System.out.print("Enter Account Number: ");
-        String acc = sc.nextLine().trim();
-
-        if (!accountExists(acc)) {
-            System.out.println("❌ Account not found!");
-            return;
-        }
-
-        if (!validatePin(acc)) return;
-
-        System.out.print("Enter amount to deposit: ");
-        BigDecimal amount = readAmount();
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            System.out.println("❌ Invalid amount!");
-            return;
-        }
-
-        String sql = "UPDATE accounts SET balance = balance + ? WHERE account_number = ?";
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setBigDecimal(1, amount);
-            ps.setString(2, acc);
-            ps.executeUpdate();
-            recordTransaction(conn, acc, "DEPOSIT", amount);
-            System.out.println("✅ ₹" + amount + " deposited successfully!");
-
-        } catch (SQLException e) {
-            System.out.println("❌ Error: " + e.getMessage());
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT account_number FROM accounts ORDER BY created_at DESC LIMIT 1")) {
+            return rs.next() ? rs.getString(1) : null;
         }
     }
 
-    // 💸 3. Withdraw
-    private static void withdraw() {
-        System.out.print("Enter Account Number: ");
-        String acc = sc.nextLine().trim();
+    private static String generateAccNo(String last, String type) {
+        String prefix = switch (type) { case "Savings" -> "SBIN"; case "Current" -> "CURR"; default -> "SAL"; };
+        int next = (last == null) ? 1001 : Integer.parseInt(last.replaceAll("\\D", "")) + 1;
+        return prefix + String.format("%07d", next);
+    }
 
-        if (!accountExists(acc)) {
-            System.out.println("❌ Account not found!");
-            return;
-        }
+    private static void customerLogin() {
+        String acc = readValidated("Account Number: ", "^[A-Z]{3,4}\\d{7}$", "Invalid account no.");
+        if (acc == null || !accountExists(acc)) { System.out.println("Account not found."); return; }
+        if (!ensureActive(acc)) return;
+        if (!authenticatePin(acc)) return;
+        if (!require2FAWithChoice(acc)) return;
+        customerMenu(acc);
+    }
 
-        if (!validatePin(acc)) return;
+    private static void customerMenu(String acc) {
+        while (true) {
+            System.out.println("\n====== 👤 CUSTOMER MENU ======");
+            System.out.println("1. Deposit");
+            System.out.println("2. Withdraw");
+            System.out.println("3. Transfer");
+            System.out.println("4. Check Balance");
+            System.out.println("5. Mini Statement");
+            System.out.println("6. Download CSV");
+            System.out.println("7. Logout");
+            System.out.println("8. Account Details"); // ✅ Added option
 
-        System.out.print("Enter amount to withdraw: ");
-        BigDecimal amount = readAmount();
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            System.out.println("❌ Invalid amount!");
-            return;
-        }
+            String ch = readValidated("Enter (1-8): ", "^[1-8]$", "Invalid.");
+            if (ch == null) return;
 
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
-            BigDecimal balance = getBalance(conn, acc);
-            if (balance.compareTo(amount) < 0) {
-                System.out.println("❌ Insufficient balance!");
-                return;
+            switch (ch) {
+                case "1" -> deposit(acc);
+                case "2" -> withdraw(acc);
+                case "3" -> transfer(acc);
+                case "4" -> showSummary(acc);
+                case "5" -> miniStatement(acc);
+                case "6" -> downloadCSV(acc);
+                case "7" -> { System.out.println("Logged out."); return; }
+                case "8" -> showFullAccountDetails(acc); // ✅ New feature
             }
-
-            try (PreparedStatement ps = conn.prepareStatement("UPDATE accounts SET balance = balance - ? WHERE account_number = ?")) {
-                ps.setBigDecimal(1, amount);
-                ps.setString(2, acc);
-                ps.executeUpdate();
-                recordTransaction(conn, acc, "WITHDRAW", amount);
-                System.out.println("✅ ₹" + amount + " withdrawn successfully!");
-            }
-
-        } catch (SQLException e) {
-            System.out.println("❌ Error: " + e.getMessage());
         }
     }
 
-    // 🔁 4. Transfer
-    private static void transfer() {
-        System.out.print("Enter Sender Account Number: ");
-        String fromAcc = sc.nextLine().trim();
-
-        if (!accountExists(fromAcc)) {
-            System.out.println("❌ Sender account not found!");
-            return;
-        }
-
-        if (!validatePin(fromAcc)) return;
-
-        System.out.print("Enter Recipient Account Number: ");
-        String toAcc = sc.nextLine().trim();
-
-        if (!accountExists(toAcc)) {
-            System.out.println("❌ Recipient account not found!");
-            return;
-        }
-
-        if (fromAcc.equals(toAcc)) {
-            System.out.println("❌ Cannot transfer to same account!");
-            return;
-        }
-
-        System.out.print("Enter amount to transfer: ");
-        BigDecimal amount = readAmount();
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            System.out.println("❌ Invalid amount!");
-            return;
-        }
-
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD)) {
-            conn.setAutoCommit(false);
-
-            BigDecimal balance = getBalance(conn, fromAcc);
-            if (balance.compareTo(amount) < 0) {
-                System.out.println("❌ Insufficient balance!");
-                conn.rollback();
-                return;
-            }
-
-            try (PreparedStatement deduct = conn.prepareStatement("UPDATE accounts SET balance = balance - ? WHERE account_number = ?");
-                 PreparedStatement add = conn.prepareStatement("UPDATE accounts SET balance = balance + ? WHERE account_number = ?")) {
-                deduct.setBigDecimal(1, amount);
-                deduct.setString(2, fromAcc);
-                add.setBigDecimal(1, amount);
-                add.setString(2, toAcc);
-                deduct.executeUpdate();
-                add.executeUpdate();
-
-                recordTransaction(conn, fromAcc, "TRANSFER-OUT", amount);
-                recordTransaction(conn, toAcc, "TRANSFER-IN", amount);
-                conn.commit();
-                System.out.println("✅ ₹" + amount + " transferred successfully to " + toAcc);
-            }
-
-        } catch (SQLException e) {
-            System.out.println("❌ Transfer Error: " + e.getMessage());
-        }
-    }
-
-    // 👁️ 5. Check Balance
-    private static void checkBalance() {
-        System.out.print("Enter Account Number: ");
-        String acc = sc.nextLine().trim();
-
-        if (!accountExists(acc)) {
-            System.out.println("❌ Account not found!");
-            return;
-        }
-
-        if (!validatePin(acc)) return;
-
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
-             PreparedStatement ps = conn.prepareStatement("SELECT balance FROM accounts WHERE account_number = ?")) {
+    // ✅ New function to show full account details
+    private static void showFullAccountDetails(String acc) {
+        if (!require2FAWithChoice(acc)) return;
+        String sql = "SELECT * FROM accounts WHERE account_number=?";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, acc);
             ResultSet rs = ps.executeQuery();
             if (rs.next()) {
-                System.out.println("💰 Current Balance: ₹" + rs.getBigDecimal(1));
+                System.out.println("\n====== 🧾 FULL ACCOUNT DETAILS ======");
+                ResultSetMetaData md = rs.getMetaData();
+                int cols = md.getColumnCount();
+                for (int i = 1; i <= cols; i++) {
+                    System.out.printf("%-20s : %s%n", md.getColumnName(i), rs.getString(i));
+                }
+                System.out.println("=====================================");
+            } else {
+                System.out.println("❌ Account not found.");
             }
         } catch (SQLException e) {
-            System.out.println("❌ Error: " + e.getMessage());
+            System.out.println("Error: " + e.getMessage());
         }
     }
+    // ====== DEPOSIT / WITHDRAW / TRANSFER ======
+    private static void deposit(String acc) {
+        if (!ensureActive(acc)) return;
+        if (!require2FAWithChoice(acc)) return; // 2FA before operation
+        BigDecimal amt = askAmount("Amount to deposit: ");
+        if (amt == null) return;
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD)) {
+            c.setAutoCommit(false);
+            try (PreparedStatement ps = c.prepareStatement("UPDATE accounts SET balance = balance + ? WHERE account_number=?")) {
+                ps.setBigDecimal(1, amt);
+                ps.setString(2, acc);
+                ps.executeUpdate();
+            }
+            recordTxn(c, "DEPOSIT", null, acc, acc, amt);
+            c.commit();
+            System.out.println("✅ Deposit successful.");
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
 
-    // 📜 6. Mini Statement
-    private static void viewMiniStatement() {
-        System.out.print("Enter Account Number: ");
-        String acc = sc.nextLine().trim();
+    private static void withdraw(String acc) {
+        if (!ensureActive(acc)) return;
+        if (!require2FAWithChoice(acc)) return; // 2FA before operation
+        BigDecimal amt = askAmount("Amount to withdraw: ");
+        if (amt == null) return;
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD)) {
+            c.setAutoCommit(false);
+            if (getBalance(c, acc).compareTo(amt) < 0) { System.out.println("❌ Insufficient balance."); c.rollback(); return; }
+            try (PreparedStatement ps = c.prepareStatement("UPDATE accounts SET balance = balance - ? WHERE account_number=?")) {
+                ps.setBigDecimal(1, amt);
+                ps.setString(2, acc);
+                ps.executeUpdate();
+            }
+            recordTxn(c, "WITHDRAW", acc, null, acc, amt);
+            c.commit();
+            System.out.println("✅ Withdraw successful.");
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
 
-        if (!accountExists(acc)) {
-            System.out.println("❌ Account not found!");
-            return;
-        }
+    private static void transfer(String fromAcc) {
+        if (!ensureActive(fromAcc)) return;
+        if (!require2FAWithChoice(fromAcc)) return; // 2FA before operation
 
-        if (!validatePin(acc)) return;
+        String toAcc = readValidated("Recipient Account Number: ", "^[A-Z]{3,4}\\d{7}$", "Invalid account no.");
+        if (toAcc == null || !accountExists(toAcc)) { System.out.println("Recipient not found."); return; }
+        if (!ensureActive(toAcc)) return;
+        if (fromAcc.equals(toAcc)) { System.out.println("❌ Cannot transfer to same account."); return; }
 
-        String sql = "SELECT tx_type, amount, tx_time FROM transactions WHERE account_number = ? ORDER BY tx_time DESC LIMIT 5";
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        BigDecimal amt = askAmount("Amount to transfer: ");
+        if (amt == null) return;
+
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD)) {
+            c.setAutoCommit(false);
+            if (getBalance(c, fromAcc).compareTo(amt) < 0) { System.out.println("❌ Insufficient balance."); c.rollback(); return; }
+
+            try (PreparedStatement d = c.prepareStatement("UPDATE accounts SET balance = balance - ? WHERE account_number=?");
+                 PreparedStatement a = c.prepareStatement("UPDATE accounts SET balance = balance + ? WHERE account_number=?")) {
+                d.setBigDecimal(1, amt); d.setString(2, fromAcc);
+                a.setBigDecimal(1, amt); a.setString(2, toAcc);
+                d.executeUpdate(); a.executeUpdate();
+            }
+
+            recordTxn(c, "TRANSFER", fromAcc, toAcc, fromAcc, amt);
+            c.commit();
+            System.out.println("✅ Transfer successful.");
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
+
+    // ====== CUSTOMER UTIL ======
+    private static void showSummary(String acc) {
+        if (!require2FAWithChoice(acc)) return; // 2FA before viewing sensitive info
+        String sql = """
+            SELECT holder_name, account_number, account_type, balance, email, phone_number, branch_name, ifsc_code, account_status
+            FROM accounts WHERE account_number=?
+            """;
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setString(1, acc);
             ResultSet rs = ps.executeQuery();
-            System.out.println("\n📜 Last 5 Transactions:");
-            System.out.println("-------------------------------");
+            if (rs.next()) {
+                System.out.println("\n=== ACCOUNT SUMMARY ===");
+                System.out.println("Name   : " + rs.getString(1));
+                System.out.println("Account: " + rs.getString(2));
+                System.out.println("Type   : " + rs.getString(3));
+                System.out.println("Balance: ₹" + rs.getBigDecimal(4));
+                System.out.println("Email  : " + rs.getString(5));
+                System.out.println("Phone  : " + rs.getString(6));
+                System.out.println("Branch : " + rs.getString(7));
+                System.out.println("IFSC   : " + rs.getString(8));
+                System.out.println("Status : " + rs.getString(9));
+                System.out.println("=======================");
+            }
+        } catch (SQLException ignored) {}
+    }
+
+    private static void miniStatement(String acc) {
+        if (!require2FAWithChoice(acc)) return; // 2FA before viewing transactions
+        System.out.println("\n📜 Recent Transactions:");
+        System.out.println("TX#        TX_CODE               TYPE         FROM         TO           AMOUNT     DATE");
+        System.out.println("-------------------------------------------------------------------------------------------");
+        String sql = """
+            SELECT tx_id, tx_code, tx_type, from_account, to_account, amount, tx_time
+            FROM transactions
+            WHERE account_number=? OR from_account=? OR to_account=?
+            ORDER BY tx_time DESC LIMIT 5
+            """;
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, acc); ps.setString(2, acc); ps.setString(3, acc);
+            ResultSet rs = ps.executeQuery();
             while (rs.next()) {
-                System.out.printf("%-15s ₹%-10s %s%n",
-                        rs.getString("tx_type"),
-                        rs.getBigDecimal("amount"),
-                        rs.getTimestamp("tx_time"));
+                System.out.printf("%-10s %-20s %-12s %-12s %-12s ₹%-9s %s%n",
+                        rs.getInt(1), rs.getString(2), rs.getString(3),
+                        opt(rs.getString(4)), opt(rs.getString(5)),
+                        rs.getBigDecimal(6), rs.getTimestamp(7));
             }
-        } catch (SQLException e) {
-            System.out.println("❌ Error fetching statement: " + e.getMessage());
-        }
+        } catch (SQLException ignored) {}
     }
 
-    // 🧾 7. Download Transactions as CSV
-    private static void downloadTransactions() {
-        System.out.print("Enter Account Number: ");
-        String acc = sc.nextLine().trim();
-
-        if (!accountExists(acc)) {
-            System.out.println("❌ Account not found!");
-            return;
-        }
-
-        if (!validatePin(acc)) return;
-
-        String sql = "SELECT tx_type, amount, tx_time FROM transactions WHERE account_number = ? ORDER BY tx_time DESC";
-        String fileName = acc + "_transactions.csv";
-
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql);
-             FileWriter writer = new FileWriter(fileName)) {
-
-            ps.setString(1, acc);
+    private static void downloadCSV(String acc) {
+        if (!require2FAWithChoice(acc)) return; // 2FA before export
+        String file = acc + "_transactions.csv";
+        String sql = """
+            SELECT tx_id, tx_code, tx_type, from_account, to_account, amount, tx_time
+            FROM transactions
+            WHERE account_number=? OR from_account=? OR to_account=?
+            ORDER BY tx_time DESC
+            """;
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql);
+             FileWriter fw = new FileWriter(file)) {
+            ps.setString(1, acc); ps.setString(2, acc); ps.setString(3, acc);
             ResultSet rs = ps.executeQuery();
-
-            writer.write("Transaction Type,Amount,Date & Time\n");
+            fw.write("TX_ID,TX_CODE,TYPE,FROM,TO,AMOUNT,DATE\n");
             while (rs.next()) {
-                writer.write(rs.getString("tx_type") + "," +
-                        rs.getBigDecimal("amount") + "," +
-                        rs.getTimestamp("tx_time") + "\n");
+                fw.write(rs.getInt(1) + "," + rs.getString(2) + "," + rs.getString(3) + "," +
+                        opt(rs.getString(4)) + "," + opt(rs.getString(5)) + "," +
+                        rs.getBigDecimal(6) + "," + rs.getTimestamp(7) + "\n");
             }
-
-            System.out.println("✅ Transactions exported successfully to file: " + fileName);
-
-        } catch (SQLException | IOException e) {
-            System.out.println("❌ Error exporting transactions: " + e.getMessage());
-        }
+            System.out.println("✅ Exported to: " + file);
+        } catch (Exception e) { System.out.println("Error: " + e.getMessage()); }
     }
 
-    // 🔐 PIN validation (3 attempts)
-    private static boolean validatePin(String acc) {
-        int attempts = 0;
-        while (attempts < 3) {
-            System.out.print("Enter PIN: ");
-            String pin = sc.nextLine().trim();
-            if (authenticate(acc, pin)) return true;
-            attempts++;
-            if (attempts < 3) {
-                System.out.println("❌ Incorrect PIN! Try again (" + (3 - attempts) + " attempts left)");
-            }
-        }
-        System.out.println("⚠️ Too many failed attempts. Try again later.");
-        return false;
+    private static String opt(String s) { return s == null ? "" : s; }
+
+    private static BigDecimal askAmount(String msg) {
+        String in = readValidated(msg, "^\\d+(\\.\\d{1,2})?$", "Invalid amount.");
+        return in == null ? null : new BigDecimal(in);
     }
 
-    // 🔐 Utility helpers
-    private static boolean accountExists(String acc) {
-        String sql = "SELECT 1 FROM accounts WHERE account_number = ?";
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+    private static BigDecimal getBalance(Connection c, String acc) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT balance FROM accounts WHERE account_number=?")) {
             ps.setString(1, acc);
             ResultSet rs = ps.executeQuery();
-            return rs.next();
-        } catch (SQLException e) {
-            return false;
+            return rs.next() ? rs.getBigDecimal(1) : BigDecimal.ZERO;
         }
     }
 
-    private static boolean authenticate(String acc, String pin) {
-        String sql = "SELECT 1 FROM accounts WHERE account_number = ? AND pin = ?";
-        try (Connection conn = DriverManager.getConnection(URL, USER, PASSWORD);
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, acc);
-            ps.setString(2, pin);
-            ResultSet rs = ps.executeQuery();
-            return rs.next();
-        } catch (SQLException e) {
-            return false;
-        }
-    }
-
-    private static BigDecimal getBalance(Connection conn, String acc) throws SQLException {
-        String sql = "SELECT balance FROM accounts WHERE account_number = ?";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, acc);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) return rs.getBigDecimal(1);
-        }
-        return BigDecimal.ZERO;
-    }
-
-    private static void recordTransaction(Connection conn, String acc, String type, BigDecimal amount) throws SQLException {
-        String sql = "INSERT INTO transactions (account_number, tx_type, amount, tx_time) VALUES (?, ?, ?, ?)";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, acc);
-            ps.setString(2, type);
-            ps.setBigDecimal(3, amount);
-            ps.setTimestamp(4, Timestamp.valueOf(LocalDateTime.now()));
+    private static void recordTxn(Connection c, String type, String from, String to, String accRef, BigDecimal amt) throws SQLException {
+        String txCode = "TXN" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) +
+                "-" + (100000 + new Random().nextInt(900000));
+        try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO transactions
+                (tx_code, from_account, to_account, account_number, tx_type, amount, tx_time)
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
+                """)) {
+            ps.setString(1, txCode);
+            ps.setString(2, from);
+            ps.setString(3, to);
+            ps.setString(4, accRef); // for deposits/withdrawals, keep owner account reference
+            ps.setString(5, type);
+            ps.setBigDecimal(6, amt);
             ps.executeUpdate();
         }
     }
 
-    private static BigDecimal readAmount() {
-        try {
-            BigDecimal val = sc.nextBigDecimal();
-            sc.nextLine();
-            return val;
-        } catch (InputMismatchException e) {
-            sc.nextLine();
-            return null;
+    // ====== ADMIN LOGIN & MENU ======
+    private static void adminLogin() {
+        String u = readValidated("Admin Username: ", ".+", "Required.");
+        if (u == null) return;
+        String p = readValidated("Admin Password: ", ".+", "Required.");
+        if (p == null) return;
+
+        if (ADMIN_USER.equals(u) && ADMIN_PASS.equals(p)) {
+            System.out.println("✅ Admin authenticated.");
+            adminMenu();
+        } else {
+            System.out.println("❌ Invalid admin credentials.");
         }
     }
+
+    private static void adminMenu() {
+        while (true) {
+            System.out.println("\n====== 🛠️ ADMIN DASHBOARD ======");
+            System.out.println("1. View All Accounts");
+            System.out.println("2. Search Account (by number or name)");
+            System.out.println("3. View All Transactions");
+            System.out.println("4. Freeze Account");
+            System.out.println("5. Unfreeze Account");
+            System.out.println("6. Close Account (Soft Delete → CLOSED)");
+            System.out.println("7. Export ALL Transactions CSV");
+            System.out.println("8. Logout");
+
+            String ch = readValidated("Enter (1-8): ", "^[1-8]$", "Invalid.");
+            if (ch == null) return;
+
+            switch (ch) {
+                case "1" -> adminViewAllAccounts();
+                case "2" -> adminSearchAccount();
+                case "3" -> adminViewAllTransactions();
+                case "4" -> adminSetStatus("FROZEN");
+                case "5" -> adminSetStatus("ACTIVE");
+                case "6" -> adminSetStatus("CLOSED");
+                case "7" -> adminExportAllTxns();
+                case "8" -> { System.out.println("Admin logged out."); return; }
+            }
+        }
+    }
+
+    private static void adminViewAllAccounts() {
+        String sql = "SELECT account_number, holder_name, account_type, balance, account_status, branch_name, ifsc_code FROM accounts ORDER BY created_at DESC";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             Statement st = c.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            System.out.println("\nACCT_NO     HOLDER           TYPE     BALANCE     STATUS    BRANCH                 IFSC");
+            System.out.println("----------------------------------------------------------------------------------------------");
+            while (rs.next()) {
+                System.out.printf("%-11s %-15s %-8s ₹%-10s %-8s %-22s %s%n",
+                        rs.getString(1), rs.getString(2), rs.getString(3),
+                        rs.getBigDecimal(4), rs.getString(5), rs.getString(6), rs.getString(7));
+            }
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
+
+    private static void adminSearchAccount() {
+        String q = readValidated("Enter account number or name: ", ".+", "Required.");
+        if (q == null) return;
+        String sql = """
+            SELECT account_number, holder_name, account_type, balance, account_status, branch_name, ifsc_code
+            FROM accounts
+            WHERE account_number = ? OR holder_name LIKE CONCAT('%',?,'%')
+            """;
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, q);
+            ps.setString(2, q);
+            ResultSet rs = ps.executeQuery();
+            boolean any = false;
+            while (rs.next()) {
+                any = true;
+                System.out.printf("%s | %s | %s | ₹%s | %s | %s | %s%n",
+                        rs.getString(1), rs.getString(2), rs.getString(3),
+                        rs.getBigDecimal(4), rs.getString(5), rs.getString(6), rs.getString(7));
+            }
+            if (!any) System.out.println("No results.");
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
+
+    private static void adminViewAllTransactions() {
+        String sql = "SELECT tx_id, tx_code, tx_type, from_account, to_account, amount, tx_time FROM transactions ORDER BY tx_time DESC LIMIT 200";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             Statement st = c.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            System.out.println("\nTX_ID  TX_CODE               TYPE         FROM         TO           AMOUNT     DATE");
+            System.out.println("------------------------------------------------------------------------------------");
+            while (rs.next()) {
+                System.out.printf("%-6d %-20s %-12s %-12s %-12s ₹%-9s %s%n",
+                        rs.getInt(1), rs.getString(2), rs.getString(3),
+                        opt(rs.getString(4)), opt(rs.getString(5)),
+                        rs.getBigDecimal(6), rs.getTimestamp(7));
+            }
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
+
+    private static void adminSetStatus(String status) {
+        String acc = readValidated("Account Number: ", "^[A-Z]{3,4}\\d{7}$", "Invalid.");
+        if (acc == null || !accountExists(acc)) { System.out.println("Account not found."); return; }
+        String sql = "UPDATE accounts SET account_status=? WHERE account_number=?";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, status);
+            ps.setString(2, acc);
+            ps.executeUpdate();
+            System.out.println("✅ Status updated to: " + status);
+        } catch (SQLException e) { System.out.println("Error: " + e.getMessage()); }
+    }
+
+    private static void adminExportAllTxns() {
+        String file = "ALL_transactions.csv";
+        String sql = "SELECT tx_id, tx_code, tx_type, from_account, to_account, amount, tx_time FROM transactions ORDER BY tx_time DESC";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             Statement st = c.createStatement(); ResultSet rs = st.executeQuery(sql);
+             FileWriter fw = new FileWriter(file)) {
+            fw.write("TX_ID,TX_CODE,TYPE,FROM,TO,AMOUNT,DATE\n");
+            while (rs.next()) {
+                fw.write(rs.getInt(1) + "," + rs.getString(2) + "," + rs.getString(3) + "," +
+                        opt(rs.getString(4)) + "," + opt(rs.getString(5)) + "," +
+                        rs.getBigDecimal(6) + "," + rs.getTimestamp(7) + "\n");
+            }
+            System.out.println("✅ Exported to: " + file);
+        } catch (Exception e) { System.out.println("Error: " + e.getMessage()); }
+    }
+
+    // -------------------- 2FA (Simulated) --------------------
+    private static class ContactInfo {
+        String email; String phone;
+        ContactInfo(String e, String p) { email = e; phone = p; }
+    }
+
+    private static ContactInfo getContactInfo(String acc) {
+        String sql = "SELECT email, phone_number FROM accounts WHERE account_number=?";
+        try (Connection c = DriverManager.getConnection(URL, USER, PASSWORD);
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, acc);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) return new ContactInfo(rs.getString(1), rs.getString(2));
+        } catch (SQLException ignored) {}
+        return null;
+    }
+
+    private static String maskEmail(String email) {
+        if (email == null || !email.contains("@")) return "unknown";
+        String[] parts = email.split("@", 2);
+        String user = parts[0];
+        String dom  = parts[1];
+        String uMask = user.length() <= 2 ? user.charAt(0) + "*" : user.charAt(0) + "***" + user.charAt(user.length()-1);
+        return uMask + "@" + dom;
+    }
+
+    private static String maskPhone(String phone) {
+        if (phone == null || phone.length() < 4) return "unknown";
+        String last4 = phone.substring(phone.length()-4);
+        return "******" + last4;
+    }
+
+    private enum OtpChannel { EMAIL, SMS }
+
+    private static OtpChannel chooseOtpChannel(ContactInfo ci) {
+        boolean hasEmail = ci.email != null && !ci.email.isBlank();
+        boolean hasPhone = ci.phone != null && !ci.phone.isBlank();
+
+        if (!hasEmail && !hasPhone) {
+            System.out.println("❌ No email/phone available for 2FA.");
+            return null;
+        }
+
+        if (hasEmail && hasPhone) {
+            System.out.println("\nChoose OTP delivery method:");
+            System.out.println("1. Email (" + maskEmail(ci.email) + ")");
+            System.out.println("2. Phone (" + maskPhone(ci.phone) + ")");
+            String ch = readValidated("Enter (1-2): ", "^[1-2]$", "Invalid choice.");
+            if (ch == null) return null;
+            return "1".equals(ch) ? OtpChannel.EMAIL : OtpChannel.SMS;
+        } else if (hasEmail) {
+            System.out.println("\nSending OTP to your Email (" + maskEmail(ci.email) + ")");
+            return OtpChannel.EMAIL;
+        } else {
+            System.out.println("\nSending OTP to your Phone (" + maskPhone(ci.phone) + ")");
+            return OtpChannel.SMS;
+        }
+    }
+
+    // Simulated senders — replace later with JavaMail / Twilio, etc.
+    private static void sendOtpEmail(String email, int otp) {
+        System.out.println("✉️  OTP sent to email: " + maskEmail(email));
+        System.out.println("(dev log) Email OTP content: " + otp);
+    }
+
+    private static void sendOtpSms(String phone, int otp) {
+        System.out.println("📱 OTP sent via SMS to: " + maskPhone(phone));
+        System.out.println("(dev log) SMS OTP content: " + otp);
+    }
+
+    /**
+     * Ask user to choose Email or Phone, send a single OTP to the chosen channel.
+     * 60s validity; if expired, auto-regenerate (no attempt penalty for expiry);
+     * Max 3 incorrect entries total.
+     */
+    private static boolean require2FAWithChoice(String acc) {
+        ContactInfo ci = getContactInfo(acc);
+        if (ci == null) { System.out.println("❌ Cannot fetch contact info for 2FA."); return false; }
+
+        OtpChannel channel = chooseOtpChannel(ci);
+        if (channel == null) return false;
+
+        int attemptsLeft = 3;
+        Random r = new Random();
+
+        while (true) {
+            int otp = 100000 + r.nextInt(900000);
+            long issuedAt = System.currentTimeMillis();
+
+            // Send to chosen channel
+            if (channel == OtpChannel.EMAIL) sendOtpEmail(ci.email, otp);
+            else sendOtpSms(ci.phone, otp);
+
+            System.out.println("🔐 Enter the 6-digit OTP (valid for 60s).");
+
+            while (true) {
+                String entered = readValidated("OTP: ", "^\\d{6}$", "Invalid OTP format.");
+                if (entered == null) return false;
+
+                long seconds = (System.currentTimeMillis() - issuedAt) / 1000;
+                if (seconds > 60) {
+                    System.out.println("⏳ OTP expired. Generating and resending a new OTP...");
+                    // regenerate and resend (no attempt penalty for expiry)
+                    break; // break inner loop to regenerate
+                }
+
+                if (Integer.parseInt(entered) == otp) {
+                    System.out.println("✅ 2FA verified.");
+                    return true;
+                }
+
+                attemptsLeft--;
+                if (attemptsLeft <= 0) {
+                    System.out.println("❌ Too many incorrect OTP attempts. Action cancelled.");
+                    return false;
+                }
+                System.out.println("❌ Incorrect OTP. (" + attemptsLeft + " attempts left)");
+                // allow retry with same (still-valid) OTP
+            }
+            // outer loop continues to regenerate on expiry
+        }
+    }
+
+    // ----- Branch record -----
+    private record Branch(String name, String ifscPrefix) {}
 }
