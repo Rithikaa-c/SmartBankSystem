@@ -8,7 +8,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.regex.Pattern;
-
+import jakarta.mail.*;
+import jakarta.mail.internet.*;
+import java.util.Properties;
+import com.twilio.Twilio;
+import com.twilio.rest.api.v2010.account.Message;
+import com.twilio.type.PhoneNumber;
 public class SmartBankApp {
     private static final String URL = "jdbc:mysql://localhost:3306/testdb";
     private static final String USER = "root";
@@ -17,7 +22,9 @@ public class SmartBankApp {
 
     private static final String ADMIN_USER = "admin";
     private static final String ADMIN_PASS = "Admin@123";
-
+    private static final String TWILIO_SID = "TWILIO_SID"; // your Account SID
+    private static final String TWILIO_AUTH = "TWILIO_AUTH"; // your Auth Token
+    private static final String TWILIO_PHONE = "+16182988289"; // your Twilio phone number
     private static final List<Branch> BRANCHES = List.of(
             new Branch("Chennai - Tambaram", "SBIN0001"),
             new Branch("Bangalore - Whitefield", "SBIN0002"),
@@ -607,14 +614,57 @@ public class SmartBankApp {
     }
 
     // Simulated senders — replace later with JavaMail / Twilio, etc.
-    private static void sendOtpEmail(String email, int otp) {
-        System.out.println("✉️  OTP sent to email: " + maskEmail(email));
-        System.out.println("(dev log) Email OTP content: " + otp);
+    private static void sendOtpEmail(String receiverEmail, int otp) {
+        final String senderEmail = "smartbankinternotp@gmail.com"; // your Gmail
+        final String senderPass = "iwfuwfxonhdkehha"; // your App Password (16 chars)
+
+        Properties props = new Properties();
+        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.starttls.enable", "true");
+        props.put("mail.smtp.host", "smtp.gmail.com");
+        props.put("mail.smtp.port", "587");
+
+        Session session = Session.getInstance(props, new Authenticator() {
+            protected PasswordAuthentication getPasswordAuthentication() {
+                return new PasswordAuthentication(senderEmail, senderPass);
+            }
+        });
+
+        try {
+            jakarta.mail.Message message = new MimeMessage(session); // ✅ Correct class
+            message.setFrom(new InternetAddress(senderEmail));
+            message.setRecipients(jakarta.mail.Message.RecipientType.TO, InternetAddress.parse(receiverEmail));
+            message.setSubject("SmartBank OTP Verification");
+            message.setText("Dear User,\n\nYour SmartBank OTP is: " + otp +
+                    "\n\nIt is valid for 60 seconds.\n\n- SmartBank Security Team");
+
+            Transport.send(message);
+            System.out.println("✅ OTP sent to: " + receiverEmail);
+        } catch (MessagingException e) {
+            System.out.println("❌ Failed to send OTP Email: " + e.getMessage());
+        }
     }
 
+
+
     private static void sendOtpSms(String phone, int otp) {
-        System.out.println("📱 OTP sent via SMS to: " + maskPhone(phone));
-        System.out.println("(dev log) SMS OTP content: " + otp);
+        try {
+            // Initialize Twilio
+            Twilio.init(TWILIO_SID, TWILIO_AUTH);
+
+            String messageBody = "Your SmartBank OTP is: " + otp + "\nValid for 60 seconds.";
+
+            // Send the SMS
+            Message message = Message.creator(
+                    new PhoneNumber("+919488153044"), // 👈 user’s phone number with country code
+                    new PhoneNumber(TWILIO_PHONE),  // 👈 your Twilio number
+                    messageBody
+            ).create();
+
+            System.out.println("✅ SMS OTP sent to: " + phone);
+        } catch (Exception e) {
+            System.out.println("❌ Failed to send SMS: " + e.getMessage());
+        }
     }
 
     /**
