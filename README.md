@@ -1,103 +1,81 @@
 🏦 NEXA Bank – Smart Banking System
 
-A Java-based Console Banking Application with features like account creation, login, deposits, withdrawals, transfers, PDF/CSV generation, daily withdrawal limits, admin dashboard, 2-Factor Authentication (OTP), and SMS/Email notifications.
+A Java-based console banking application with secure authentication, account management, transactions, PDF/CSV export, and an admin dashboard.
 
-📌 Features
-👤 Customer Features
+🚀 Features
+👤 Customer
 
-✔ Create Savings / Current / Salary Account
-✔ Secure Login with:
+Create Savings / Current / Salary Account
 
-PIN Verification
+Secure Login (PIN + 2FA OTP)
 
-2-Factor Authentication (Email/SMS OTP)
-✔ Deposit Money
-✔ Withdraw Money
-✔ Transfer Money with alerts
-✔ Check Balance
-✔ Mini Statement
-✔ Download:
+Deposit / Withdraw (with daily limits)
 
-CSV Transaction History
+Money Transfer
 
-PDF Account Statement
-✔ Change PIN
-✔ Update Email
-✔ Update Phone Number
-✔ Set Daily Withdrawal Limit
+Check Balance
 
-🛠️ Admin Features
+Mini Statement
 
-✔ View All Accounts
-✔ Search Accounts (by Number / Name)
-✔ View All Transactions
-✔ Freeze Account
-✔ Unfreeze Account
-✔ Close Account
-✔ Export ALL transactions to CSV
-✔ Secure Admin Login
+Download CSV & PDF
 
-📁 Project Structure
-SmartBankSystem/
-│
-├── src/
-│   ├── SmartBankApp.java        # Main banking application
-│   ├── other helper classes     # (if any)
-│
-├── database/
-│   ├── accounts_table.sql
-│   ├── transactions_table.sql
-│
-├── generated_files/
-│   ├── ACCNO_transactions.csv
-│   ├── ACCNO_statement.pdf
-│
-└── README.md
+Update Email / Phone
 
-🗄️ Database Schema
-Accounts Table
-Column	Type	Description
-account_number	VARCHAR	PK
-holder_name	VARCHAR	Account Holder Name
-pin	VARCHAR	SHA-256 Encrypted PIN
-balance	DECIMAL	Current Balance
-account_type	VARCHAR	Savings / Current / Salary
-email	VARCHAR	User Email
-phone_number	VARCHAR	User Phone
-daily_limit	DECIMAL	Daily Withdrawal Limit
-account_status	VARCHAR	ACTIVE / FROZEN / CLOSED
-created_at	TIMESTAMP	Creation Time
-branch_name	VARCHAR	Branch Name
-ifsc_code	VARCHAR	Bank IFSC Code
-Transactions Table
-Column	Type	Description
-tx_id	INT (PK)	Transaction ID
-tx_code	VARCHAR	Unique Transaction Code
-tx_type	VARCHAR	DEPOSIT / WITHDRAW / TRANSFER
-from_account	VARCHAR	Sender Account
-to_account	VARCHAR	Receiver Account
-amount	DECIMAL	Amount
-tx_time	TIMESTAMP	Transaction Time
-🔐 Security Features
+Change PIN
 
-✔ PIN stored using SHA-256 hashing
-✔ Automatic lockout after 3 failed PIN attempts
-✔ Optional Email or SMS OTP
-✔ OTP Expiry Time: 60 seconds
-✔ Masked Email & Phone Number display
-✔ Admin-secured dashboard
-✔ Secrets removed from code (recommended via environment variables)
+View Account Details
 
-🔧 Technologies Used
+🛠️ Admin
 
-Java
+View all accounts
 
-MySQL
+Search accounts
 
-JavaMail (Jakarta Mail)
+View all transactions
+
+Freeze / Unfreeze / Close accounts
+
+Export all transactions (CSV)
+
+🔐 Security
+
+SHA-256 PIN hashing
+
+OTP verification (Email/SMS)
+
+OTP expiry (60 sec)
+
+3-attempt lockout
+
+SQL-safe operations
+
+🛠 Tech Stack
+
+Java 17
+
+MySQL (JDBC)
+
+JavaMail API
 
 Twilio SMS API
 
-iText PDF Library
+iTextPDF
 
-JDBC
+SHA-256 security
+
+⚙️ How to Run
+
+Import project into IntelliJ/Eclipse
+
+Add libraries: MySQL Connector, JavaMail, Twilio, iTextPDF
+
+Create MySQL DB bankdb
+
+Update DB, Email, Twilio credentials
+
+Run SmartBankApp.java
+
+📁 Tables
+
+accounts – customer info, PIN hash, balance, daily_limit, branch
+transactions – all deposits, withdrawals, transfers
