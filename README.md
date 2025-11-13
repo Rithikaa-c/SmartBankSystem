@@ -51,7 +51,7 @@ SQL-safe operations
 
 🛠 Tech Stack
 
-Java 17
+Java 25
 
 MySQL (JDBC)
 
